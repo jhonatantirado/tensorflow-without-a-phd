@@ -25,17 +25,17 @@ mnist = mnistdata.read_data_sets("data", one_hot=True, reshape=False)
 
 # neural network structure for this sample:
 #
-# · · · · · · · · · ·      (input data, 1-deep)                 X [batch, 28, 28, 1]
+#       (input data, 1-deep)                 X [batch, 28, 28, 1]
 # @ @ @ @ @ @ @ @ @ @   -- conv. layer 6x6x1=>6 stride 1        W1 [5, 5, 1, 6]        B1 [6]
-# ∶∶∶∶∶∶∶∶∶∶∶∶∶∶∶∶∶∶∶                                           Y1 [batch, 28, 28, 6]
+# :::::::::::::::::::                                           Y1 [batch, 28, 28, 6]
 #   @ @ @ @ @ @ @ @     -- conv. layer 5x5x6=>12 stride 2       W2 [5, 5, 6, 12]        B2 [12]
-#   ∶∶∶∶∶∶∶∶∶∶∶∶∶∶∶                                             Y2 [batch, 14, 14, 12]
+#   :::::::::::::::                                             Y2 [batch, 14, 14, 12]
 #     @ @ @ @ @ @       -- conv. layer 4x4x12=>24 stride 2      W3 [4, 4, 12, 24]       B3 [24]
-#     ∶∶∶∶∶∶∶∶∶∶∶                                               Y3 [batch, 7, 7, 24] => reshaped to YY [batch, 7*7*24]
-#      \x/x\x\x/ ✞      -- fully connected layer (relu+dropout) W4 [7*7*24, 200]       B4 [200]
-#       · · · ·                                                 Y4 [batch, 200]
+#     :::::::::::                                               Y3 [batch, 7, 7, 24] => reshaped to YY [batch, 7*7*24]
+#      \x/x\x\x/ ?      -- fully connected layer (relu+dropout) W4 [7*7*24, 200]       B4 [200]
+#                                                        Y4 [batch, 200]
 #       \x/x\x/         -- fully connected layer (softmax)      W5 [200, 10]           B5 [10]
-#        · · ·                                                  Y [batch, 10]
+#                                                          Y [batch, 10]
 
 # input X: 28x28 grayscale images, the first dimension (None) will index the images in the mini-batch
 X = tf.placeholder(tf.float32, [None, 28, 28, 1])
@@ -81,7 +81,11 @@ YY = tf.reshape(Y3, shape=[-1, 7 * 7 * M])
 Y4 = tf.nn.relu(tf.matmul(YY, W4) + B4)
 YY4 = tf.nn.dropout(Y4, pkeep)
 Ylogits = tf.matmul(YY4, W5) + B5
-Y = tf.nn.softmax(Ylogits)
+Y = tf.nn.softmax(Ylogits,name="chapopote")
+
+#AttributeError: 'Tensor' object has no attribute 'summary'
+#Y.summary()
+
 
 # cross-entropy loss function (= -sum(Y_i * log(Yi)) ), normalised for batches of 100  images
 # TensorFlow provides the softmax_cross_entropy_with_logits function to avoid numerical stability
@@ -135,12 +139,45 @@ def training_step(i, update_test_data, update_train_data):
 
     # the backpropagation training step
     sess.run(train_step, {X: batch_X, Y_: batch_Y, step: i, pkeep: 0.75})
+	
+	# save the weights and the meta data for the graph
+    save_model = (i % save_interval == 0)
+	
+    if save_model:
+        print ("Saving model on step " + str(i))
+        saver.save(sess, model_dir + 'model.ckpt', global_step=i)
+        tf.train.write_graph(sess.graph_def, model_dir, 'graph.pbtxt')
 
-datavis.animate(training_step, 10001, train_data_update_freq=20, test_data_update_freq=100)
+# use the saved model and continue training
+useCkpt = False
+# default number of iterations after we save the model
+save_interval = 500
+saver = tf.train.Saver()
+model_dir = 'E:\\DeepLearning\\tensorflow-without-a-phd\\tensorflow-mnist-tutorial\\model\\'
+
+num_steps = 1500
+
+'''
+Meta graph
+This is a protocol buffer which saves the complete Tensorflow graph; i.e. all variables, operations, collections etc. This file has .meta extension.
+
+Checkpoint file
+This is a binary file which contains all the values of the weights, biases, gradients and all the other variables saved. This file has an extension .ckpt
+'''
+
+# restore the previously saved value if we wish to continue the training
+if useCkpt:
+    ckpt = tf.train.get_checkpoint_state(model_dir)
+    saver.restore(sess, ckpt.model_checkpoint_path)
+
+train_data_update_freq_c = 20
+test_data_update_freq_c = 100
+
+#datavis.animate(training_step, num_steps + 1, train_data_update_freq=train_data_update_freq_c, test_data_update_freq=test_data_update_freq_c,save_movie=False)
 
 # to save the animation as a movie, add save_movie=True as an argument to datavis.animate
 # to disable the visualisation use the following line instead of the datavis.animate line
-# for i in range(10000+1): training_step(i, i % 100 == 0, i % 20 == 0)
+for i in range(num_steps + 1): training_step(i, i % test_data_update_freq_c == 0, i % train_data_update_freq_c == 0)
 
 print("max test accuracy: " + str(datavis.get_max_test_accuracy()))
 
@@ -157,3 +194,7 @@ print("max test accuracy: " + str(datavis.get_max_test_accuracy()))
 #*layers 6 12 24 200, patches 6x6str1 5x5str2 4x4str2 dropout=0.75 best 0.9928 after 12800 iterations (but consistently above 0.99 after 1300 iterations only, 0.9916 at 2300 iterations, 0.9921 at 5600, 0.9925 at 20000)
 #*same with dacaying learning rate 0.003-0.0001-2000: best 0.9931 (on other runs max accuracy 0.9921, 0.9927, 0.9935, 0.9929, 0.9933)
 
+'''
+Convertir el archivo graph.pbtxt a frozen_graph.pb
+python -m tensorflow.python.tools.freeze_graph --input_graph=model/graph.pbtxt --input_checkpoint=model/model.ckpt-1500 --input_binary=false --output_graph=model/frozen_graph.pb --output_node_names="chapopote"
+'''
